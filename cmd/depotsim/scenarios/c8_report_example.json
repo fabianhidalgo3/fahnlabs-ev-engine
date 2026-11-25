@@ -1,0 +1,24 @@
+{
+  "id": "C8",
+  "title": "Report example (Cuadro 8): 4 buses, 300 kW available",
+  "description": "Check case of the report: four buses connected at 00:00, 150 kW each, 300 kW available, no auxiliary load. The first weighted interval must reproduce Cuadro 9 (A 71.4, B 78.7, C 124.6, D 25.2 kW).",
+  "start": "00:00",
+  "site_limit_kw": 300,
+  "margin_kw": 0,
+  "aux_kw": 0,
+  "chargers": 4,
+  "charger_kw": 150,
+  "efficiency": 0.95,
+  "interval_min": 10,
+  "taper": { "transition_soc": 80, "end_fraction": 0.2 },
+  "weights": { "urgency": 0.40, "deficit": 0.20, "energy": 0.20, "importance": 0.20 },
+  "demand_charge_clp_per_kw_month": 10000,
+  "connection_upgrade_clp_per_kw": 400000,
+  "seed": 1,
+  "buses": [
+    { "id": "A", "battery_kwh": 350, "max_kw": 150, "arrival": "00:00", "departure": "03:00", "arrival_soc": 40, "target_soc": 90, "min_soc": 80, "importance": 3 },
+    { "id": "B", "battery_kwh": 350, "max_kw": 150, "arrival": "00:00", "departure": "01:30", "arrival_soc": 55, "target_soc": 90, "min_soc": 80, "importance": 5 },
+    { "id": "C", "battery_kwh": 280, "max_kw": 150, "arrival": "00:00", "departure": "02:00", "arrival_soc": 20, "target_soc": 90, "min_soc": 80, "importance": 2 },
+    { "id": "D", "battery_kwh": 420, "max_kw": 150, "arrival": "00:00", "departure": "06:00", "arrival_soc": 85, "target_soc": 90, "min_soc": 80, "importance": 4 }
+  ]
+}

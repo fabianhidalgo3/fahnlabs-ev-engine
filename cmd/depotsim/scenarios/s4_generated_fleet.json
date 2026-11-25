@@ -1,0 +1,38 @@
+{
+  "id": "S4",
+  "title": "Generated fleet (seed 42): 10 buses, one 150 kW charger per bus, limit 900 kW",
+  "description": "Fleet drawn by the seeded generator inside the declared ranges (arrivals 21:00-00:00, departures 05:00-07:00, arrival SoC 20-50 %, batteries 280/350/420 kWh, importance 1-5). Base of the fleet-size sweep: the limit stays at 900 kW and there is one charger per bus.",
+  "start": "20:00",
+  "site_limit_kw": 900,
+  "margin_kw": 0,
+  "aux_profile": [
+    { "from": "20:00", "kw": 80 },
+    { "from": "23:00", "kw": 50 },
+    { "from": "05:00", "kw": 90 }
+  ],
+  "charger_kw": 150,
+  "efficiency": 0.95,
+  "interval_min": 10,
+  "taper": { "transition_soc": 80, "end_fraction": 0.2 },
+  "weights": { "urgency": 0.40, "deficit": 0.20, "energy": 0.20, "importance": 0.20 },
+  "demand_charge_clp_per_kw_month": 10000,
+  "connection_upgrade_clp_per_kw": 400000,
+  "seed": 42,
+  "generator": {
+    "n": 10,
+    "battery_kwh": [280, 350, 420],
+    "max_kw": 150,
+    "arrival_from": "21:00",
+    "arrival_to": "00:00",
+    "departure_from": "05:00",
+    "departure_to": "07:00",
+    "arrival_soc": [20, 50],
+    "target_soc": 90,
+    "min_soc": 80,
+    "importance": [1, 5],
+    "step_min": 5
+  },
+  "sweeps": {
+    "fleet_sizes": [4, 6, 8, 10, 12, 14, 16, 20]
+  }
+}

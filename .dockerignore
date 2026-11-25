@@ -1,0 +1,9 @@
+bin/
+*.exe
+*.test
+*.out
+# Secrets stay out of the image (the motor would otherwise load ./.env at startup); pass env vars at runtime.
+.env
+**/.env
+Dockerfile
+.dockerignore

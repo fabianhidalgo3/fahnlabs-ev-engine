@@ -1,0 +1,731 @@
+openapi: 3.1.0
+info:
+  title: EV yard power control — motor (domain) API
+  version: v1
+  description: |
+    Domain service: CSMS logic, power allocation engine, charging plans, master data (PostgreSQL) and operational
+    data (MongoDB). Consumed by the BFF. OCPP reaches the chargers through the OCPP gateway. Live snapshots are pushed
+    on the WebSocket `/api/v1/events` (not describable in OpenAPI). Errors are RFC 9457 problem details; times are
+    epoch milliseconds.
+  contact:
+    name: Fabián Hidalgo
+  license:
+    name: All rights reserved
+servers:
+  - url: /
+    description: This motor
+security:
+  - {}
+  - motorToken: []
+tags:
+  - name: State
+  - name: Vehicles
+  - name: Chargers
+  - name: Charging plans
+  - name: Sessions
+  - name: Logs
+  - name: Energy
+  - name: Maintenance
+  - name: Queries
+    description: Read-only queries used by the AI assistant
+  - name: Exports
+  - name: Service
+paths:
+  /api/v1/state:
+    get:
+      tags: [State]
+      operationId: getState
+      summary: Live snapshot of the yard (chargers, connectors, allocation, limit)
+      description: |
+        Each charger carries `currentType` (AC | DC). Each connector carries `minSoc` (minimum SoC at departure in
+        force, plan else vehicle) and `priorityModel` (the PriorityModel object, null unless the strategy is
+        `weighted`); its `plan` has `minSoc` and its `vehicle` has `minSoc` and `maxDcKw`.
+      responses:
+        '200': { $ref: '#/components/responses/AnyObject' }
+  /api/v1/config:
+    get:
+      tags: [State]
+      operationId: getConfig
+      summary: Engine configuration
+      responses:
+        '200':
+          description: Configuration
+          content: { application/json: { schema: { $ref: '#/components/schemas/Config' } } }
+    put:
+      tags: [State]
+      operationId: updateConfig
+      summary: Partial update of the engine configuration
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/Config' }, example: { siteLimitKw: 50, strategy: need } } }
+      responses:
+        '200':
+          description: Updated configuration
+          content: { application/json: { schema: { $ref: '#/components/schemas/Config' } } }
+        '400': { $ref: '#/components/responses/Problem' }
+
+  /api/v1/vehicles:
+    get:
+      tags: [Vehicles]
+      operationId: listVehicles
+      summary: Vehicle registry
+      description: Also allowed cross-origin (for the web emulator).
+      responses:
+        '200':
+          description: Vehicles
+          content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/Vehicle' } } } }
+    post:
+      tags: [Vehicles]
+      operationId: createVehicle
+      summary: Register a vehicle
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/VehicleInput' } } }
+      responses:
+        '201':
+          description: Created
+          content: { application/json: { schema: { $ref: '#/components/schemas/Vehicle' } } }
+        '400': { $ref: '#/components/responses/Problem' }
+  /api/v1/vehicles/{id}:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: integer, format: int64 } }
+    get:
+      tags: [Vehicles]
+      operationId: getVehicle
+      summary: One vehicle
+      responses:
+        '200':
+          description: Vehicle
+          content: { application/json: { schema: { $ref: '#/components/schemas/Vehicle' } } }
+        '404': { $ref: '#/components/responses/Problem' }
+    put:
+      tags: [Vehicles]
+      operationId: updateVehicle
+      summary: Update a vehicle
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/VehicleInput' } } }
+      responses:
+        '200':
+          description: Updated
+          content: { application/json: { schema: { $ref: '#/components/schemas/Vehicle' } } }
+        '400': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
+    delete:
+      tags: [Vehicles]
+      operationId: deleteVehicle
+      summary: Delete a vehicle
+      responses:
+        '204': { description: Deleted }
+        '404': { $ref: '#/components/responses/Problem' }
+
+  /api/v1/chargers:
+    get:
+      tags: [Chargers]
+      operationId: listChargers
+      summary: Charger registry
+      responses:
+        '200':
+          description: Chargers
+          content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/Charger' } } } }
+    post:
+      tags: [Chargers]
+      operationId: registerCharger
+      summary: Pre-register a charger (offline until it connects)
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/ChargerPatch' }, example: { id: YARD-07, location: North bay, maxPowerKw: 22 } } }
+      responses:
+        '201':
+          description: Registered
+          content: { application/json: { schema: { $ref: '#/components/schemas/Charger' } } }
+        '400': { $ref: '#/components/responses/Problem' }
+  /api/v1/chargers/{id}:
+    parameters: [{ $ref: '#/components/parameters/ChargerId' }]
+    put:
+      tags: [Chargers]
+      operationId: updateCharger
+      summary: Update location, maximum power or priority
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/ChargerPatch' } } }
+      responses:
+        '200':
+          description: Updated
+          content: { application/json: { schema: { $ref: '#/components/schemas/Charger' } } }
+        '400': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
+    delete:
+      tags: [Chargers]
+      operationId: removeCharger
+      summary: Remove a disconnected charger
+      responses:
+        '204': { description: Removed }
+        '400': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
+  /api/v1/chargers/{id}/remote-start:
+    parameters: [{ $ref: '#/components/parameters/ChargerId' }]
+    post:
+      tags: [Chargers]
+      operationId: remoteStart
+      summary: RemoteStartTransaction (keeps the CSMS state)
+      requestBody:
+        content: { application/json: { schema: { $ref: '#/components/schemas/Command' }, example: { connectorId: 1, vehicleId: 3 } } }
+      responses:
+        '200': { $ref: '#/components/responses/AnyObject', description: 'Charger answer, e.g. {"status":"Accepted"}' }
+        '400': { $ref: '#/components/responses/Problem' }
+        '409': { $ref: '#/components/responses/Problem', description: Charger not connected }
+        '503': { $ref: '#/components/responses/Problem', description: OCPP gateway unavailable }
+        '504': { $ref: '#/components/responses/Problem', description: No answer }
+  /api/v1/chargers/{id}/remote-stop:
+    parameters: [{ $ref: '#/components/parameters/ChargerId' }]
+    post:
+      tags: [Chargers]
+      operationId: remoteStop
+      summary: RemoteStopTransaction of the session on a connector
+      requestBody:
+        content: { application/json: { schema: { $ref: '#/components/schemas/Command' }, example: { connectorId: 1 } } }
+      responses:
+        '200': { $ref: '#/components/responses/AnyObject', description: 'Charger answer, e.g. {"status":"Accepted"}' }
+        '400': { $ref: '#/components/responses/Problem' }
+        '409': { $ref: '#/components/responses/Problem', description: Charger not connected }
+        '503': { $ref: '#/components/responses/Problem', description: OCPP gateway unavailable }
+        '504': { $ref: '#/components/responses/Problem', description: No answer }
+  /api/v1/chargers/{id}/reset:
+    parameters: [{ $ref: '#/components/parameters/ChargerId' }]
+    post:
+      tags: [Chargers]
+      operationId: reset
+      summary: Reset the charger
+      requestBody:
+        content: { application/json: { schema: { $ref: '#/components/schemas/Command' }, example: { type: Soft } } }
+      responses:
+        '200': { $ref: '#/components/responses/AnyObject', description: 'Charger answer, e.g. {"status":"Accepted"}' }
+        '400': { $ref: '#/components/responses/Problem' }
+        '409': { $ref: '#/components/responses/Problem', description: Charger not connected }
+        '503': { $ref: '#/components/responses/Problem', description: OCPP gateway unavailable }
+        '504': { $ref: '#/components/responses/Problem', description: No answer }
+  /api/v1/chargers/{id}/ocpp/{action}:
+    parameters:
+      - { $ref: '#/components/parameters/ChargerId' }
+      - name: action
+        in: path
+        required: true
+        description: OCPP 1.6 command initiated by the central system
+        schema:
+          type: string
+          enum: [CancelReservation, ChangeAvailability, ChangeConfiguration, ClearCache, ClearChargingProfile, DataTransfer,
+            GetCompositeSchedule, GetConfiguration, GetDiagnostics, GetLocalListVersion, RemoteStartTransaction,
+            RemoteStopTransaction, ReserveNow, Reset, SendLocalList, SetChargingProfile, TriggerMessage, UnlockConnector,
+            UpdateFirmware]
+    post:
+      tags: [Chargers]
+      operationId: ocppCommand
+      summary: Any OCPP 1.6 command, relayed to the OCPP gateway
+      description: The body is the OCPP payload; the answer is the charger's CALLRESULT payload.
+      requestBody:
+        content:
+          application/json:
+            schema: { type: object, additionalProperties: true }
+            example: { key: [HeartbeatInterval] }
+      responses:
+        '200': { $ref: '#/components/responses/AnyObject' }
+        '400': { $ref: '#/components/responses/Problem', description: Unknown command or invalid JSON }
+        '409': { $ref: '#/components/responses/Problem', description: Charger not connected }
+        '502': { $ref: '#/components/responses/Problem', description: The charger answered with a CALLERROR }
+        '503': { $ref: '#/components/responses/Problem', description: OCPP gateway unavailable }
+        '504': { $ref: '#/components/responses/Problem', description: No answer }
+
+  /api/v1/charging-plans:
+    get:
+      tags: [Charging plans]
+      operationId: listPlans
+      summary: Plans overlapping a range
+      parameters: [{ $ref: '#/components/parameters/From' }, { $ref: '#/components/parameters/To' }]
+      responses:
+        '200':
+          description: Plans
+          content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/Plan' } } } }
+    post:
+      tags: [Charging plans]
+      operationId: createPlan
+      summary: Create a plan (without startAt it starts now)
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/PlanRequest' } } }
+      responses:
+        '201':
+          description: Created
+          content: { application/json: { schema: { $ref: '#/components/schemas/Plan' } } }
+        '400': { $ref: '#/components/responses/Problem' }
+  /api/v1/charging-plans/{id}:
+    delete:
+      tags: [Charging plans]
+      operationId: cancelPlan
+      summary: Cancel a plan (a running session goes on without it)
+      parameters: [{ name: id, in: path, required: true, schema: { type: integer, format: int64 } }]
+      responses:
+        '204': { description: Cancelled }
+        '404': { $ref: '#/components/responses/Problem' }
+
+  /api/v1/sessions:
+    get:
+      tags: [Sessions]
+      operationId: listSessions
+      summary: Sessions overlapping a range (default last 7 days); running ones carry live values
+      parameters: [{ $ref: '#/components/parameters/From' }, { $ref: '#/components/parameters/To' }]
+      responses:
+        '200':
+          description: Sessions
+          content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/Session' } } } }
+  /api/v1/sessions/active:
+    get:
+      tags: [Sessions]
+      operationId: activeSessions
+      summary: Sessions in memory with live values
+      responses:
+        '200': { $ref: '#/components/responses/AnyArray' }
+  /api/v1/sessions/{id}/samples:
+    get:
+      tags: [Sessions]
+      operationId: sessionSamples
+      summary: Power samples of a session
+      parameters: [{ name: id, in: path, required: true, description: Transaction id, schema: { type: integer, format: int64 } }]
+      responses:
+        '200':
+          description: Samples
+          content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/MeterSample' } } } }
+
+  /api/v1/logs/ocpp:
+    get:
+      tags: [Logs]
+      operationId: ocppLog
+      summary: OCPP frames
+      parameters:
+        - { $ref: '#/components/parameters/LogChargerId' }
+        - { $ref: '#/components/parameters/LogAction' }
+        - { $ref: '#/components/parameters/LogDirection' }
+        - { $ref: '#/components/parameters/LogKind' }
+        - { $ref: '#/components/parameters/LogLevel' }
+        - { $ref: '#/components/parameters/LogErrorsOnly' }
+        - { $ref: '#/components/parameters/LogText' }
+        - { $ref: '#/components/parameters/From' }
+        - { $ref: '#/components/parameters/To' }
+        - { $ref: '#/components/parameters/LogLimit' }
+        - { $ref: '#/components/parameters/LogOrder' }
+      responses:
+        '200': { $ref: '#/components/responses/AnyArray' }
+  /api/v1/logs/events:
+    get:
+      tags: [Logs]
+      operationId: engineEvents
+      summary: Engine events
+      parameters:
+        - { $ref: '#/components/parameters/LogChargerId' }
+        - { $ref: '#/components/parameters/LogAction' }
+        - { $ref: '#/components/parameters/LogDirection' }
+        - { $ref: '#/components/parameters/LogKind' }
+        - { $ref: '#/components/parameters/LogLevel' }
+        - { $ref: '#/components/parameters/LogErrorsOnly' }
+        - { $ref: '#/components/parameters/LogText' }
+        - { $ref: '#/components/parameters/From' }
+        - { $ref: '#/components/parameters/To' }
+        - { $ref: '#/components/parameters/LogLimit' }
+        - { $ref: '#/components/parameters/LogOrder' }
+      responses:
+        '200': { $ref: '#/components/responses/AnyArray' }
+  /api/v1/logs/commands:
+    get:
+      tags: [Logs]
+      operationId: commandLog
+      summary: Commands sent to chargers with their answer and latency
+      parameters:
+        - { $ref: '#/components/parameters/LogChargerId' }
+        - { $ref: '#/components/parameters/LogAction' }
+        - { $ref: '#/components/parameters/LogDirection' }
+        - { $ref: '#/components/parameters/LogKind' }
+        - { $ref: '#/components/parameters/LogLevel' }
+        - { $ref: '#/components/parameters/LogErrorsOnly' }
+        - { $ref: '#/components/parameters/LogText' }
+        - { $ref: '#/components/parameters/From' }
+        - { $ref: '#/components/parameters/To' }
+        - { $ref: '#/components/parameters/LogLimit' }
+        - { $ref: '#/components/parameters/LogOrder' }
+      responses:
+        '200': { $ref: '#/components/responses/AnyArray' }
+  /api/v1/logs/command-stats:
+    get:
+      tags: [Logs]
+      operationId: commandStats
+      summary: Per command — sent, rejected, no answer, mean latency (default last hour)
+      parameters:
+        - { $ref: '#/components/parameters/LogChargerId' }
+        - { $ref: '#/components/parameters/LogAction' }
+        - { $ref: '#/components/parameters/LogDirection' }
+        - { $ref: '#/components/parameters/LogKind' }
+        - { $ref: '#/components/parameters/LogLevel' }
+        - { $ref: '#/components/parameters/LogErrorsOnly' }
+        - { $ref: '#/components/parameters/LogText' }
+        - { $ref: '#/components/parameters/From' }
+        - { $ref: '#/components/parameters/To' }
+        - { $ref: '#/components/parameters/LogLimit' }
+        - { $ref: '#/components/parameters/LogOrder' }
+      responses:
+        '200': { $ref: '#/components/responses/AnyArray' }
+  /api/v1/logs/summary:
+    get:
+      tags: [Logs]
+      operationId: logSummary
+      summary: Per charger, per action and most frequent errors (default last hour)
+      parameters:
+        - { $ref: '#/components/parameters/LogChargerId' }
+        - { $ref: '#/components/parameters/LogAction' }
+        - { $ref: '#/components/parameters/LogDirection' }
+        - { $ref: '#/components/parameters/LogKind' }
+        - { $ref: '#/components/parameters/LogLevel' }
+        - { $ref: '#/components/parameters/LogErrorsOnly' }
+        - { $ref: '#/components/parameters/LogText' }
+        - { $ref: '#/components/parameters/From' }
+        - { $ref: '#/components/parameters/To' }
+        - { $ref: '#/components/parameters/LogLimit' }
+        - { $ref: '#/components/parameters/LogOrder' }
+      responses:
+        '200': { $ref: '#/components/responses/AnyObject' }
+  /api/v1/logs/actions:
+    get:
+      tags: [Logs]
+      operationId: ocppActions
+      summary: OCPP actions seen in the last 7 days
+      responses:
+        '200': { $ref: '#/components/responses/AnyArray' }
+
+  /api/v1/energy/groups:
+    get:
+      tags: [Energy]
+      operationId: energyGroups
+      summary: Yards (charger ID prefixes) with sessions, and the current tariffs
+      responses:
+        '200': { $ref: '#/components/responses/AnyObject' }
+  /api/v1/energy/report:
+    get:
+      tags: [Energy]
+      operationId: energyReport
+      summary: Energy indicators — controlled demand vs immediate full-power charging
+      description: Includes `socCompliance` (see the EnergyReportSocCompliance schema).
+      parameters:
+        - { $ref: '#/components/parameters/From' }
+        - { $ref: '#/components/parameters/To' }
+        - { name: groups, in: query, description: Comma-separated yard prefixes, schema: { type: string } }
+      responses:
+        '200': { $ref: '#/components/responses/AnyObject' }
+
+  /api/v1/maintenance/health:
+    get:
+      tags: [Maintenance]
+      operationId: maintenanceHealth
+      summary: Health and risk per charger (up to 40)
+      parameters:
+        - { name: chargerId, in: query, schema: { type: string } }
+        - { name: days, in: query, schema: { type: number, default: 7 } }
+      responses:
+        '200': { $ref: '#/components/responses/AnyObject' }
+  /api/v1/maintenance/history:
+    get:
+      tags: [Maintenance]
+      operationId: maintenanceHistory
+      summary: Time series of one charger
+      parameters:
+        - { name: chargerId, in: query, required: true, schema: { type: string } }
+        - { name: days, in: query, schema: { type: number, default: 14 } }
+        - { name: bucket, in: query, description: hour only when days <= 3, schema: { type: string, enum: [day, hour], default: day } }
+      responses:
+        '200': { $ref: '#/components/responses/AnyObject' }
+        '400': { $ref: '#/components/responses/Problem' }
+  /api/v1/maintenance/forecast:
+    get:
+      tags: [Maintenance]
+      operationId: maintenanceForecast
+      summary: Failure forecast per charger (up to 30)
+      parameters:
+        - { name: chargerId, in: query, schema: { type: string } }
+        - { name: horizonDays, in: query, schema: { type: number, default: 7 } }
+        - { name: windowDays, in: query, schema: { type: number, default: 30 } }
+      responses:
+        '200': { $ref: '#/components/responses/AnyObject' }
+
+  /api/v1/queries/sql:
+    post:
+      tags: [Queries]
+      operationId: sqlQuery
+      summary: One read-only SELECT on PostgreSQL (5 s, 200 rows)
+      requestBody:
+        required: true
+        content: { application/json: { schema: { type: object, required: [sql], properties: { sql: { type: string } } }, example: { sql: 'SELECT name, max_ac_kw FROM vehicles ORDER BY name' } } }
+      responses:
+        '200': { $ref: '#/components/responses/QueryResult' }
+        '400': { $ref: '#/components/responses/Problem' }
+  /api/v1/queries/mongo:
+    post:
+      tags: [Queries]
+      operationId: mongoQuery
+      summary: Aggregation on MongoDB with allowed stages and collections only (5 s, 200 rows)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [collection, pipeline]
+              properties:
+                collection: { type: string }
+                pipeline: { type: array, items: { type: object } }
+            example: { collection: site_samples, pipeline: [{ $group: { _id: null, maxEvW: { $max: '$ev_w' } } }] }
+      responses:
+        '200': { $ref: '#/components/responses/QueryResult' }
+        '400': { $ref: '#/components/responses/Problem' }
+
+  /api/v1/exports/{name}:
+    get:
+      tags: [Exports]
+      operationId: exportRows
+      summary: Raw rows for exports (the BFF builds the CSV)
+      parameters:
+        - { name: name, in: path, required: true, schema: { type: string, enum: [sessions, meter-samples, site-samples, vehicles, chargers] } }
+        - { name: transactionId, in: query, description: meter-samples only, schema: { type: integer, format: int64 } }
+        - { name: from, in: query, description: site-samples only, schema: { type: integer, format: int64 } }
+      responses:
+        '200': { $ref: '#/components/responses/AnyArray' }
+        '404': { $ref: '#/components/responses/Problem' }
+
+  /api/v1/health:
+    get:
+      tags: [Service]
+      operationId: health
+      summary: Service health
+      responses:
+        '200':
+          description: Status
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string, example: UP }
+                  service: { type: string, example: motor }
+                  connectedChargers: { type: integer }
+
+components:
+  securitySchemes:
+    motorToken:
+      type: apiKey
+      in: header
+      name: X-Motor-Token
+      description: Only when MOTOR_TOKEN is set
+  parameters:
+    ChargerId: { name: id, in: path, required: true, description: ChargePoint ID, schema: { type: string, example: PRUEBA-01 } }
+    From: { name: from, in: query, description: epoch ms, schema: { type: integer, format: int64 } }
+    To: { name: to, in: query, description: epoch ms, schema: { type: integer, format: int64 } }
+    LogChargerId: { name: chargerId, in: query, description: '% wildcard allowed', schema: { type: string } }
+    LogAction: { name: action, in: query, schema: { type: string } }
+    LogDirection: { name: direction, in: query, schema: { type: string, enum: [in, out] } }
+    LogKind: { name: kind, in: query, schema: { type: string, enum: [CALL, CALLRESULT, CALLERROR] } }
+    LogLevel: { name: level, in: query, schema: { type: string } }
+    LogErrorsOnly: { name: errorsOnly, in: query, schema: { type: boolean } }
+    LogText: { name: text, in: query, schema: { type: string } }
+    LogLimit: { name: limit, in: query, schema: { type: integer, default: 100 } }
+    LogOrder: { name: order, in: query, schema: { type: string, enum: [asc, desc], default: desc } }
+  responses:
+    Problem:
+      description: Problem details (RFC 9457)
+      content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } }
+    AnyObject:
+      description: JSON object
+      content: { application/json: { schema: { type: object, additionalProperties: true } } }
+    AnyArray:
+      description: JSON array
+      content: { application/json: { schema: { type: array, items: { type: object, additionalProperties: true } } } }
+    QueryResult:
+      description: Rows
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              rows: { type: array, items: { type: object, additionalProperties: true } }
+              truncated: { type: boolean }
+  schemas:
+    Problem:
+      type: object
+      properties:
+        type: { type: string, example: about:blank }
+        title: { type: string }
+        status: { type: integer }
+        detail: { type: string }
+        instance: { type: string }
+    Config:
+      type: object
+      description: Engine configuration (PUT accepts any subset)
+      properties:
+        siteLimitKw: { type: number, description: Yard / grid connection limit }
+        buildingLoadKw: { type: number, description: Auxiliary (unmanaged) loads }
+        buildingLoadMode: { type: string, enum: [fixed, simulated] }
+        strategy: { type: string, enum: [equal, priority, fifo, need, weighted] }
+        minPowerKw: { type: number, description: Minimum power of an AC session (IEC 61851 6 A); DC sessions have no minimum }
+        weights:
+          type: object
+          description: Weights of the priority function of the weighted strategy; each 0–1, they must add up to 1 (±0.01). PUT may send a subset (merged, then checked).
+          properties:
+            urgency: { type: number, minimum: 0, maximum: 1, default: 0.4 }
+            deficit: { type: number, minimum: 0, maximum: 1, default: 0.2 }
+            energy: { type: number, minimum: 0, maximum: 1, default: 0.2 }
+            importance: { type: number, minimum: 0, maximum: 1, default: 0.2 }
+        chargeEfficiency: { type: number, minimum: 0.5, maximum: 1, default: 0.95, description: Charging efficiency η (weighted strategy) }
+        controlIntervalMin: { type: number, minimum: 1, maximum: 60, default: 10, description: Control interval Δt in minutes (weighted strategy) }
+        safetyMarginKw: { type: number }
+        chargingRateUnit: { type: string, enum: [W, A] }
+        voltage: { type: number }
+        phases: { type: integer }
+        acceptUnknownChargers: { type: boolean }
+        energy: { type: object, additionalProperties: true, description: Tariffs and emission factor for the energy indicators }
+      additionalProperties: true
+    VehicleInput:
+      type: object
+      required: [name]
+      properties:
+        name: { type: string }
+        make: { type: [string, 'null'] }
+        model: { type: [string, 'null'] }
+        vin: { type: [string, 'null'], description: 17 characters, no I/O/Q }
+        evccid: { type: [string, 'null'], description: MAC of the EV communication controller }
+        id_tag: { type: [string, 'null'], description: RFID idTag }
+        battery_kwh: { type: number, minimum: 1, maximum: 1000 }
+        max_ac_kw: { type: number }
+        phases: { type: integer, enum: [1, 3] }
+        target_soc: { type: number }
+        priority: { type: integer }
+        min_soc: { type: [number, 'null'], minimum: 0, maximum: 100, description: Minimum SoC at departure (≤ target_soc); null clears it }
+        max_dc_kw: { type: [number, 'null'], minimum: 1, maximum: 1000, description: Maximum DC charging power; null clears it }
+    Vehicle:
+      allOf:
+        - { $ref: '#/components/schemas/VehicleInput' }
+        - type: object
+          properties:
+            id: { type: integer, format: int64 }
+            created_at: { type: integer, format: int64 }
+    ChargerPatch:
+      type: object
+      properties:
+        id: { type: string, description: Required on POST }
+        location: { type: [string, 'null'] }
+        maxPowerKw: { type: [number, 'null'] }
+        priority: { type: [number, 'null'] }
+        currentType: { type: [string, 'null'], enum: [AC, DC, null], description: 'AC caps sessions with the vehicle max_ac_kw, DC with max_dc_kw (case-insensitive)' }
+    Charger:
+      type: object
+      properties:
+        id: { type: string }
+        vendor: { type: [string, 'null'] }
+        model: { type: [string, 'null'] }
+        serial: { type: [string, 'null'] }
+        firmware: { type: [string, 'null'] }
+        location: { type: [string, 'null'] }
+        max_power_kw: { type: number }
+        priority: { type: integer }
+        manual_max: { type: boolean }
+        connectors: { type: [integer, 'null'] }
+        first_seen: { type: [integer, 'null'], format: int64 }
+        last_seen: { type: [integer, 'null'], format: int64 }
+        current_type: { type: string, enum: [AC, DC], default: AC }
+    Command:
+      type: object
+      properties:
+        connectorId: { type: integer, default: 1 }
+        idTag: { type: string, description: remote-start only (default REMOTE) }
+        vehicleId: { type: integer, format: int64, description: remote-start only }
+        type: { type: string, enum: [Soft, Hard], description: reset only }
+    PlanRequest:
+      type: object
+      required: [chargerId]
+      properties:
+        chargerId: { type: string }
+        connectorId: { type: integer }
+        vehicleId: { type: integer, format: int64 }
+        idTag: { type: string }
+        startAt: { type: integer, format: int64 }
+        departureAt: { type: integer, format: int64 }
+        targetSoc: { type: number }
+        minSoc: { type: number, minimum: 10, maximum: 100, description: Minimum SoC at departure (≤ targetSoc); overrides the vehicle min_soc }
+        maxKw: { type: number }
+    Plan:
+      type: object
+      properties:
+        id: { type: integer, format: int64 }
+        charger_id: { type: string }
+        connector_id: { type: integer }
+        vehicle_id: { type: [integer, 'null'], format: int64 }
+        vehicle_name: { type: [string, 'null'] }
+        id_tag: { type: string }
+        start_at: { type: integer, format: int64 }
+        departure_at: { type: [integer, 'null'], format: int64 }
+        target_soc: { type: [number, 'null'] }
+        min_soc: { type: [number, 'null'] }
+        max_kw: { type: [number, 'null'] }
+        status: { type: string }
+        transaction_id: { type: [integer, 'null'], format: int64 }
+        note: { type: [string, 'null'] }
+        created_at: { type: integer, format: int64 }
+        updated_at: { type: [integer, 'null'], format: int64 }
+    Session:
+      type: object
+      properties:
+        transaction_id: { type: integer, format: int64 }
+        charger_id: { type: string }
+        connector_id: { type: integer }
+        vehicle_id: { type: [integer, 'null'], format: int64 }
+        vehicle_name: { type: [string, 'null'] }
+        id_tag: { type: [string, 'null'] }
+        ident_method: { type: [string, 'null'], enum: [vin, evccid, autocharge, rfid, null] }
+        started_at: { type: integer, format: int64 }
+        stopped_at: { type: [integer, 'null'], format: int64 }
+        energy_wh: { type: [number, 'null'] }
+        soc_start: { type: [number, 'null'] }
+        soc_end: { type: [number, 'null'] }
+        max_power_w: { type: [number, 'null'] }
+        stop_reason: { type: [string, 'null'] }
+        min_soc: { type: [number, 'null'], description: 'Minimum SoC at departure in force (plan, else vehicle)' }
+        departure_at: { type: [integer, 'null'], format: int64, description: Departure time of the charging plan }
+        soc_departure: { type: [number, 'null'], description: SoC at the departure time (finished sessions) }
+        min_soc_met: { type: [boolean, 'null'], description: 'soc_departure ≥ min_soc; null when it cannot be judged (no minimum, no departure or no SoC)' }
+        live: { type: boolean, description: Present on running sessions }
+      additionalProperties: true
+    PriorityModel:
+      type: object
+      description: Weighted-strategy evaluation of one session (formulas 1–7 of the bus-depot model)
+      properties:
+        energyKWh: { type: number, description: Energy still to deliver (E) }
+        needKW: { type: number, description: Average power needed until departure }
+        urgency: { type: number, description: 'U = min(1, Pneed / Pmax)' }
+        deficit: { type: number, description: SoC deficit D }
+        energyRel: { type: number, description: Relative energy Er }
+        importance: { type: number, description: 'Importance I, 0 to 1' }
+        priority: { type: number, description: Priority P (1 under contingency) }
+        forecastSoc: { type: number, description: Forecast SoC at departure with an equal share }
+        contingency: { type: boolean, description: Forecast below the minimum SoC }
+        hasModelInput: { type: boolean, description: 'False when SoC, target or battery capacity are unknown (mean priority used)' }
+    EnergyReportSocCompliance:
+      type: object
+      description: 'Block `socCompliance` of GET /api/v1/energy/report: departures in the period with a recorded verdict and how many left with SoC ≥ minimum'
+      properties:
+        departures: { type: integer }
+        met: { type: integer }
+        pct: { type: [number, 'null'] }
+    MeterSample:
+      type: object
+      properties:
+        transaction_id: { type: integer, format: int64 }
+        t: { type: integer, format: int64 }
+        power_w: { type: [number, 'null'] }
+        allocated_w: { type: [number, 'null'] }
+        energy_wh: { type: [number, 'null'] }
+        soc: { type: [number, 'null'] }
+        current_a: { type: [number, 'null'] }

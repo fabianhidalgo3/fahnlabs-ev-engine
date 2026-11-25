@@ -1,0 +1,20 @@
+# Dependencies and build output
+node_modules/
+bin/
+target/
+dist/
+build/
+.angular/
+.gradle/
+# Secrets
+.env
+!.env.example
+credentials.txt
+# Local tooling
+graphify-out/
+.claude/
+.idea/
+*.iml
+*:Zone.Identifier
+.DS_Store
+Thumbs.db
