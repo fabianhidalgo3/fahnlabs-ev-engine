@@ -1,12 +1,12 @@
-# ev-engine · CSMS and power allocation engine
+# fahnlabs-ev-engine · CSMS and power allocation engine
 
 Part of **EV yard power control** by FAHNLABS: real-time power allocation for an electric-vehicle charging yard.
 Overview, architecture and deployment: [fahnlabs-ev-deploy](https://github.com/fabianhidalgo3/fahnlabs-ev-deploy).
 
 The engine (called *motor* in the code) is the domain service: OCPP 1.6J central system logic, the power allocation
 algorithm that keeps the yard under its contracted limit, charging plans, energy and maintenance analytics, and the
-only owner of the data. It talks to chargers through [ev-gateway](https://github.com/fabianhidalgo3/fahnlabs-ev-gateway)
-and serves [ev-bff](https://github.com/fabianhidalgo3/fahnlabs-ev-bff).
+only owner of the data. It talks to chargers through [fahnlabs-ev-gateway](https://github.com/fabianhidalgo3/fahnlabs-ev-gateway)
+and serves [fahnlabs-ev-bff](https://github.com/fabianhidalgo3/fahnlabs-ev-bff).
 
 ## Stack
 
@@ -14,7 +14,7 @@ Go 1.27 · gorilla/websocket · pgx 5 (PostgreSQL 19) · MongoDB Go driver 2 (Mo
 
 ## Run
 
-Start the databases with `docker compose up -d` in `ev-deploy`, then:
+Start the databases with `docker compose up -d` in `fahnlabs-ev-deploy`, then:
 
 ```bash
 go test ./...                     # allocation engine tests
@@ -43,7 +43,7 @@ Four strategies: equal share (bisection water level), by priority, first come fi
 the coordinated strategies:
 
 ```bash
-go run ./cmd/depotsim -out ../ev-deploy/docs/results
+go run ./cmd/depotsim -out ../fahnlabs-ev-deploy/docs/results
 ```
 
 ## API
